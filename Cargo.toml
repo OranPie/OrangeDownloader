@@ -1,0 +1,19 @@
+[package]
+name = "OrangeDownloader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
+reqwest = { version = "0.11", features = ["json", "gzip", "brotli", "deflate", "stream", "rustls-tls"] }
+bytes = "1.5"
+async-trait = "0.1"
+anyhow = "1.0"
+uuid = { version = "1.7", features = ["v4"] }
+clap = { version = "4.5", features = ["derive"] }
+url = "2.5"
+futures = "0.3"
+sanitize-filename = "0.5"
+thiserror = "1.0"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
+
