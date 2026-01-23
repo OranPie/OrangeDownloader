@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use crate::core::model::{LinkInput, ResourceDescriptor, ResourceType};
+use clap::{ArgMatches, Command};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,6 +30,19 @@ pub trait LinkResolver: Send + Sync {
     fn name(&self) -> &'static str;
     fn can_handle(&self, input: &LinkInput) -> u8;
     async fn resolve(&self, input: &LinkInput, ctx: &ResolveContext) -> anyhow::Result<ResolveResult>;
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadCliConfig {
+    pub headers: HashMap<String, String>,
+    pub options: HashMap<String, String>,
+    pub driver_ctx: DriverContext,
+}
+
+pub trait CliPlugin: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn augment_download_command(&self, cmd: Command) -> Command;
+    fn apply_download_matches(&self, matches: &ArgMatches, cfg: &mut DownloadCliConfig) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -68,19 +83,42 @@ pub trait TransferDriver: Send + Sync {
 pub struct PluginRegistry {
     resolvers: Vec<Box<dyn LinkResolver>>,
     drivers: Vec<Arc<dyn TransferDriver>>,
+    cli_plugins: Vec<Box<dyn CliPlugin>>,
 }
 
 impl PluginRegistry {
     pub fn with_defaults() -> Self {
-        let mut reg = Self { resolvers: vec![], drivers: vec![] };
+        let mut reg = Self { resolvers: vec![], drivers: vec![], cli_plugins: vec![] };
 
         reg.resolvers.push(Box::new(crate::plugins::github::resolver::GitHubResolver::new()));
         reg.resolvers.push(Box::new(crate::plugins::http::resolver::HttpResolver::new()));
         reg.resolvers.push(Box::new(crate::plugins::bt::resolver::BtResolver::new()));
         reg.resolvers.push(Box::new(crate::plugins::ed2k::resolver::Ed2kResolver::new()));
+        reg.resolvers.push(Box::new(crate::plugins::ftp::resolver::FtpResolver::new()));
+        reg.resolvers.push(Box::new(crate::plugins::sftp::resolver::SftpResolver::new()));
+        reg.resolvers.push(Box::new(crate::plugins::adb::resolver::AdbResolver::new()));
 
         reg.drivers.push(Arc::new(crate::plugins::http::driver::HttpDriver::new()));
+
+        reg.cli_plugins.push(Box::new(crate::plugins::http::cli::HttpCliPlugin::new()));
+        reg.cli_plugins.push(Box::new(crate::plugins::ed2k::cli::Ed2kCliPlugin::new()));
+        reg.cli_plugins.push(Box::new(crate::plugins::ftp::cli::FtpCliPlugin::new()));
+        reg.cli_plugins.push(Box::new(crate::plugins::sftp::cli::SftpCliPlugin::new()));
+        reg.cli_plugins.push(Box::new(crate::plugins::adb::cli::AdbCliPlugin::new()));
         reg
+    }
+
+    pub fn augment_download_command(&self, cmd: Command) -> Command {
+        self.cli_plugins
+            .iter()
+            .fold(cmd, |c, p| p.augment_download_command(c))
+    }
+
+    pub fn apply_download_matches(&self, matches: &ArgMatches, cfg: &mut DownloadCliConfig) -> anyhow::Result<()> {
+        for p in &self.cli_plugins {
+            p.apply_download_matches(matches, cfg)?;
+        }
+        Ok(())
     }
 
     pub fn best_resolver(&self, input: &LinkInput) -> Option<&dyn LinkResolver> {

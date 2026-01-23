@@ -66,11 +66,11 @@ impl LinkResolver for BtResolver {
         Ok(ResolveResult {
             drafts: vec![DownloadItemDraft {
                 display_name: dn.clone(),
-                suggested_path: ctx.out_dir.join(format!("{}.bt", dn)),
+                suggested_path: ctx.out_dir.join(&dn),
                 total_size: None,
                 resources: vec![res],
             }],
-            warnings: vec!["BT 已解析 infohash/trackers，但下载会话暂未实现。".into()],
+            warnings: vec![],
         })
     }
 }

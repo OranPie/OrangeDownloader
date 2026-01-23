@@ -103,6 +103,7 @@ impl Engine {
         let mut items: Vec<DownloadItem> = vec![];
         let mut any_failed = false;
         for input in inputs {
+            let input_options = input.options.clone();
             let resolver = match self.registry.best_resolver(&input) {
                 Some(r) => r,
                 None => {
@@ -115,9 +116,20 @@ impl Engine {
                 }
             };
 
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: "resolve".to_string(),
+                message: format!("input={} resolver={}", input.raw, resolver.name()),
+            });
+
             let rr = resolver.resolve(&input, &ctx).await;
             match rr {
                 Ok(resolved) => {
+                    for w in &resolved.warnings {
+                        let _ = self.event_tx.send(EngineEvent::Info {
+                            scope: "resolve-warning".to_string(),
+                            message: w.clone(),
+                        });
+                    }
                     for d in resolved.drafts {
                         let item_id = Uuid::new_v4();
                         let item = DownloadItem {
@@ -128,6 +140,7 @@ impl Engine {
                             target_path: d.suggested_path,
                             total_size: d.total_size,
                             resources: d.resources,
+                            options: input_options.clone(),
                             fragments: vec![],
                         };
                         if let Some(res0) = item.resources.get(0) {
@@ -193,16 +206,99 @@ impl Engine {
         let _ = self.event_tx.send(EngineEvent::ItemStatusChanged { item_id: item.id, status: ItemStatus::Downloading });
 
         let res = item.resources.get(0).context("no resource")?.clone();
-        if matches!(res.rtype, ResourceType::BitTorrent | ResourceType::Ed2k) {
+        if matches!(res.rtype, ResourceType::BitTorrent) {
             let info = res.meta.get("infohash").cloned().unwrap_or_default();
             let _ = self.event_tx.send(EngineEvent::Info {
-                scope: format!("protocol item={}", item.display_name),
-                message: format!("Parsed {:?}. infohash={}. Download session not implemented yet.", res.rtype, info),
+                scope: format!("bt item={}", item.display_name),
+                message: format!("starting magnet download. infohash={}", info),
             });
-            anyhow::bail!("protocol {:?} not implemented yet", res.rtype);
+
+            crate::plugins::bt::driver::BtDriver::new()
+                .download_magnet_to_dir(&res, &self.driver_ctx, &item.target_path)
+                .await?;
+
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("bt item={}", item.display_name),
+                message: "completed".to_string(),
+            });
+            return Ok(());
+        }
+
+        if matches!(res.rtype, ResourceType::Adb) {
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("adb item={}", item.display_name),
+                message: format!("pulling {}", res.uri),
+            });
+
+            crate::plugins::adb::driver::AdbDriver::new()
+                .pull_to_file(&res, &self.driver_ctx, &item.target_path, &item.options)
+                .await?;
+
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("adb item={}", item.display_name),
+                message: "completed".to_string(),
+            });
+            return Ok(());
+        }
+
+        if matches!(res.rtype, ResourceType::Ed2k) {
+            let hash = res.meta.get("hash").cloned().unwrap_or_default();
+            let size = res.meta.get("size").cloned().unwrap_or_default();
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("ed2k item={}", item.display_name),
+                message: format!("starting (hash={} size={})", hash, size),
+            });
+
+            crate::plugins::ed2k::driver::Ed2kDriver::new()
+                .download_to_path(&res, &self.driver_ctx, &item.target_path, &item.options)
+                .await?;
+
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("ed2k item={}", item.display_name),
+                message: "completed".to_string(),
+            });
+            return Ok(());
+        }
+
+        if matches!(res.rtype, ResourceType::Ftp) {
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("ftp item={}", item.display_name),
+                message: format!("downloading {}", res.uri),
+            });
+
+            crate::plugins::ftp::driver::FtpDriver::new()
+                .download_to_file(&res, &self.driver_ctx, &item.target_path, &item.options)
+                .await?;
+
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("ftp item={}", item.display_name),
+                message: "completed".to_string(),
+            });
+            return Ok(());
+        }
+
+        if matches!(res.rtype, ResourceType::Sftp) {
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("sftp item={}", item.display_name),
+                message: format!("downloading {}", res.uri),
+            });
+
+            crate::plugins::sftp::driver::SftpDriver::new()
+                .download_to_file(&res, &self.driver_ctx, &item.target_path, &item.options)
+                .await?;
+
+            let _ = self.event_tx.send(EngineEvent::Info {
+                scope: format!("sftp item={}", item.display_name),
+                message: "completed".to_string(),
+            });
+            return Ok(());
         }
 
         let driver = self.registry.driver_for(&res).context("no driver for resource")?;
+        let _ = self.event_tx.send(EngineEvent::Info {
+            scope: format!("driver item={}", item.display_name),
+            message: format!("selected driver={}", driver.name()),
+        });
         let dctx = self.driver_ctx.clone();
         driver.prepare(&res, &dctx).await?;
 

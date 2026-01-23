@@ -48,6 +48,7 @@ pub struct DownloadItem {
     pub target_path: PathBuf,
     pub total_size: Option<u64>,
     pub resources: Vec<ResourceDescriptor>,
+    pub options: HashMap<String, String>,
     pub fragments: Vec<Fragment>,
 }
 
@@ -57,6 +58,9 @@ pub enum ResourceType {
     GitHubResolvedHttp,
     BitTorrent,
     Ed2k,
+    Ftp,
+    Sftp,
+    Adb,
 }
 
 #[derive(Debug, Clone, Default)]
