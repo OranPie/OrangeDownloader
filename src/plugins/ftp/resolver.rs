@@ -39,12 +39,37 @@ impl LinkResolver for FtpResolver {
 
         let suggested_path = ctx.out_dir.join(filename);
 
+        // Embed connection credentials into meta so the TransferDriver can access them
+        // without needing a separate options map. CLI options override URL components.
+        let mut meta = std::collections::HashMap::new();
+
+        let user = input.options.get("ftp_user").cloned().unwrap_or_else(|| {
+            if url.username().is_empty() {
+                "anonymous".to_string()
+            } else {
+                url.username().to_string()
+            }
+        });
+        meta.insert("ftp_user".to_string(), user);
+
+        if let Some(pass) = input.options.get("ftp_pass").cloned()
+            .or_else(|| url.password().map(|s| s.to_string()))
+        {
+            meta.insert("ftp_pass".to_string(), pass);
+        }
+
+        let port = input.options.get("ftp_port").cloned()
+            .or_else(|| url.port().map(|p| p.to_string()))
+            .unwrap_or_else(|| "21".to_string());
+        meta.insert("ftp_port".to_string(), port);
+
         let res = ResourceDescriptor {
             rtype: ResourceType::Ftp,
             uri: input.raw.clone(),
             headers: Default::default(),
-            meta: Default::default(),
-            caps: Capabilities { supports_ranges: false, max_parallel: 1 },
+            meta,
+            // FTP supports REST-based ranges; actual server capability is confirmed at probe time.
+            caps: Capabilities { supports_ranges: true, max_parallel: 1 },
         };
 
         Ok(ResolveResult {

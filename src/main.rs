@@ -1,10 +1,12 @@
 mod core;
+mod i18n;
 mod plugins;
 
 use clap::{Arg, ArgAction, Command};
 use core::engine::Engine;
 use core::events::EngineEvent;
 use core::model::LinkInput;
+use i18n::{get_messages, Locale};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use plugins::registry::PluginRegistry;
 use plugins::registry::DriverContext;
@@ -16,6 +18,13 @@ use uuid::Uuid;
 fn build_cli(registry: &PluginRegistry) -> Command {
     let download = Command::new("download")
         .about("Download one or more links")
+        .arg(
+            Arg::new("locale")
+                .long("locale")
+                .help("UI locale: en (default) or zh")
+                .default_value("en")
+                .num_args(1),
+        )
         .arg(
             Arg::new("links")
                 .help("Links to download")
@@ -62,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
 
     match matches.subcommand() {
         Some(("download", m)) => {
+            let locale = Locale::from_str(m.get_one::<String>("locale").map(|s| s.as_str()).unwrap_or("en"));
+            let msg = get_messages(locale);
+
             let out_dir: PathBuf = m.get_one::<String>("out_dir").unwrap().into();
             let concurrency: usize = m.get_one::<String>("concurrency").unwrap().parse()?;
             let chunk_mb: u64 = m.get_one::<String>("chunk_mb").unwrap().parse()?;
@@ -105,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
                 .collect();
 
             let job_id = engine.add_and_start(inputs).await?;
-            println!("Job started: {}", job_id);
+            println!("{}: {}", msg.job_started, job_id);
 
             let mut rx = engine.subscribe();
             let ui_job_id = job_id;
@@ -142,15 +154,15 @@ async fn main() -> anyhow::Result<()> {
                     match evt {
                         EngineEvent::JobStatusChanged { job_id, status } => {
                             if job_id == ui_job_id {
-                                let _ = mp.println(format!("[JOB] {} -> {:?}", job_id, status));
+                                let _ = mp.println(format!("[{}] {} -> {:?}", msg.job_prefix, job_id, status));
                                 if matches!(status, core::model::JobStatus::Completed | core::model::JobStatus::Failed) {
                                     let _ = mp.println("".to_string());
-                                    let _ = mp.println("Summary:".to_string());
+                                    let _ = mp.println(format!("{}:", msg.summary_header));
                                     let mut ids: Vec<_> = items.keys().cloned().collect();
                                     ids.sort();
                                     for id in ids {
                                         if let Some(v) = items.get(&id) {
-                                            let total_s = v.total.map(fmt_bytes).unwrap_or_else(|| "?".to_string());
+                                            let total_s = v.total.map(fmt_bytes).unwrap_or_else(|| msg.total_unknown.to_string());
                                             let _ = mp.println(format!(
                                                 "- item={} status={} {} / {} name={} path={} uri={}",
                                                 id,
@@ -162,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
                                                 v.uri,
                                             ));
                                             for e in &v.errors {
-                                                let _ = mp.println(format!("  error: {}", e));
+                                                let _ = mp.println(format!("  {}: {}", msg.error_prefix, e));
                                             }
                                         }
                                     }
@@ -175,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
                             pb.set_style(sty_pb.clone());
                             pb.set_prefix(format!("[{display_name}]"));
                             pb.enable_steady_tick(std::time::Duration::from_millis(120));
-                            pb.set_message(format!("added -> {} ({})", target_path.display(), uri));
+                            pb.set_message(format!("{} -> {} ({})", msg.item_added, target_path.display(), uri));
                             bars.insert(item_id, pb);
                             items.insert(
                                 item_id,
@@ -183,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
                                     display_name,
                                     target_path: target_path.display().to_string(),
                                     uri,
-                                    status: "added".to_string(),
+                                    status: msg.item_added.to_string(),
                                     downloaded: 0,
                                     total: None,
                                     errors: vec![],
@@ -197,10 +209,10 @@ async fn main() -> anyhow::Result<()> {
                             if let Some(pb) = bars.get(&item_id) {
                                 pb.set_message(format!("status={:?}", status));
                                 if matches!(status, core::model::ItemStatus::Done) {
-                                    pb.finish_with_message("done".to_string());
+                                    pb.finish_with_message(msg.status_done.to_string());
                                 }
                                 if matches!(status, core::model::ItemStatus::Failed) {
-                                    pb.finish_with_message("failed".to_string());
+                                    pb.finish_with_message(msg.status_failed.to_string());
                                 }
                             }
                         }
@@ -226,16 +238,16 @@ async fn main() -> anyhow::Result<()> {
 
                             let eta_s = eta
                                 .map(|d| format!("{:.0}s", d.as_secs_f64()))
-                                .unwrap_or_else(|| "-".to_string());
-                            pb.set_message(format!("{} / {} | {} | eta {}", fmt_bytes(downloaded), total.map(fmt_bytes).unwrap_or_else(|| "?".to_string()), fmt_bytes(speed_bps), eta_s));
+                                .unwrap_or_else(|| msg.eta_unknown.to_string());
+                            pb.set_message(format!("{} / {} | {} | eta {}", fmt_bytes(downloaded), total.map(fmt_bytes).unwrap_or_else(|| msg.total_unknown.to_string()), fmt_bytes(speed_bps), eta_s));
                         }
                         EngineEvent::FragmentDone { item_id, completed, total } => {
                             if let Some(pb) = bars.get(&item_id) {
-                                pb.set_message(format!("fragments {}/{}", completed, total));
+                                pb.set_message(format!("{} {}/{}", msg.fragments_label, completed, total));
                             }
                         }
                         EngineEvent::Error { scope, message } => {
-                            let _ = mp.println(format!("[ERR] {}: {}", scope, message));
+                            let _ = mp.println(format!("[{}] {}: {}", msg.error_prefix, scope, message));
                             for (id, v) in items.iter_mut() {
                                 if scope.contains(&id.to_string()) {
                                     v.errors.push(format!("{}: {}", scope, message));
@@ -243,7 +255,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                         EngineEvent::Info { scope, message } => {
-                            let _ = mp.println(format!("[INFO] {}: {}", scope, message));
+                            let _ = mp.println(format!("[{}] {}: {}", msg.info_prefix, scope, message));
                         }
                     }
                 }
@@ -253,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
 
             let _ = ui_task.await;
 
-            println!("Job finished: {}", job_id);
+            println!("{}: {}", msg.job_finished, job_id);
         }
         _ => {}
     }

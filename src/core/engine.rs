@@ -260,23 +260,6 @@ impl Engine {
             return Ok(());
         }
 
-        if matches!(res.rtype, ResourceType::Ftp) {
-            let _ = self.event_tx.send(EngineEvent::Info {
-                scope: format!("ftp item={}", item.display_name),
-                message: format!("downloading {}", res.uri),
-            });
-
-            crate::plugins::ftp::driver::FtpDriver::new()
-                .download_to_file(&res, &self.driver_ctx, &item.target_path, &item.options)
-                .await?;
-
-            let _ = self.event_tx.send(EngineEvent::Info {
-                scope: format!("ftp item={}", item.display_name),
-                message: "completed".to_string(),
-            });
-            return Ok(());
-        }
-
         if matches!(res.rtype, ResourceType::Sftp) {
             let _ = self.event_tx.send(EngineEvent::Info {
                 scope: format!("sftp item={}", item.display_name),
