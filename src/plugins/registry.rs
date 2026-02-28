@@ -99,6 +99,7 @@ impl PluginRegistry {
         reg.resolvers.push(Box::new(crate::plugins::adb::resolver::AdbResolver::new()));
 
         reg.drivers.push(Arc::new(crate::plugins::http::driver::HttpDriver::new()));
+        reg.drivers.push(Arc::new(crate::plugins::ftp::driver::FtpDriver::new()));
 
         reg.cli_plugins.push(Box::new(crate::plugins::http::cli::HttpCliPlugin::new()));
         reg.cli_plugins.push(Box::new(crate::plugins::ed2k::cli::Ed2kCliPlugin::new()));
